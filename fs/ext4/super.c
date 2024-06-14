@@ -48,6 +48,7 @@
 #include <linux/fsnotify.h>
 #include <linux/fs_context.h>
 #include <linux/fs_parser.h>
+#include <net/genetlink.h>
 
 #include "ext4.h"
 #include "ext4_extents.h"	/* Needed for trace points definition */
@@ -56,6 +57,7 @@
 #include "acl.h"
 #include "mballoc.h"
 #include "fsmap.h"
+#include "ext4_chain.h"
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/ext4.h>
@@ -95,7 +97,7 @@ static void ext4_fc_free(struct fs_context *fc);
 static int ext4_init_fs_context(struct fs_context *fc);
 static void ext4_kill_sb(struct super_block *sb);
 static const struct fs_parameter_spec ext4_param_specs[];
-
+static struct genl_family ext4_chain_fam;
 /*
  * Lock ordering
  *
@@ -158,7 +160,6 @@ static struct file_system_type ext3_fs_type = {
 MODULE_ALIAS_FS("ext3");
 MODULE_ALIAS("ext3");
 #define IS_EXT3_SB(sb) ((sb)->s_type == &ext3_fs_type)
-
 
 static inline void __ext4_read_bh(struct buffer_head *bh, blk_opf_t op_flags,
 				  bh_end_io_t *end_io)
@@ -7396,6 +7397,10 @@ static int __init ext4_init_fs(void)
 	if (err)
 		goto out05;
 
+    err = genl_register_family(&ext4_chain_fam);
+    if (err)
+        printk("Family not registered.");
+
 	register_as_ext3();
 	register_as_ext2();
 	err = register_filesystem(&ext4_fs_type);
@@ -7430,6 +7435,7 @@ out7:
 static void __exit ext4_exit_fs(void)
 {
 	ext4_destroy_lazyinit_thread();
+    genl_unregister_family(&ext4_chain_fam);
 	unregister_as_ext2();
 	unregister_as_ext3();
 	unregister_filesystem(&ext4_fs_type);
