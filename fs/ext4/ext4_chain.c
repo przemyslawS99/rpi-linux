@@ -11,6 +11,7 @@ static const struct nla_policy ext4_chain_policy[NUM_EXT4_CHAIN_ATTR] = {
     [EXT4_CHAIN_ATTR_NSEC] = { .type = NLA_U32 },
     [EXT4_CHAIN_ATTR_MODE] = { .type = NLA_U32 },
     [EXT4_CHAIN_ATTR_SIZE] = { .type = NLA_U64 },
+    [EXT4_CHAIN_ATTR_INO] = { .type = NLA_U64 },
 };
 
 enum ext4_chain_multicast_groups {
