@@ -41,6 +41,9 @@
 #include <linux/bitops.h>
 #include <linux/iomap.h>
 #include <linux/iversion.h>
+#include <linux/cred.h>
+
+#include "../internal.h"
 
 #include "ext4_jbd2.h"
 #include "xattr.h"
@@ -49,6 +52,8 @@
 #include "ext4_chain.h"
 
 #include <trace/events/ext4.h>
+
+#define EXT4_BLOCKCHAIN_GID KGIDT_INIT(1001)
 
 static __u32 ext4_inode_csum(struct inode *inode, struct ext4_inode *raw,
 			      struct ext4_inode_info *ei)
@@ -5271,142 +5276,97 @@ static void ext4_wait_for_tail_page_commit(struct inode *inode)
 	}
 }
 
-void setattr_chain_copy(struct mnt_idmap *idmap, struct inode *inode,
-		  const struct iattr *attr)
+int ext4_send_attr(const struct iattr *attr, struct inode *inode)
 {
-    struct sk_buff *msg;
-    void *msg_head;
 	unsigned int ia_valid = attr->ia_valid;
+    
+    struct sk_buff *msg;
+    void *hdr;
 
-    int rc;
+    int err = -EMSGSIZE;
 
     msg = genlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL);
     if (!msg) {
-        printk("Failed to alocate new message\n");
-        return;
+        err = -ENOMEM;
+        goto err_out;
     }
     
-    msg_head = genlmsg_put(msg, 0, 0, &ext4_chain_fam, 0, EXT4_CHAIN_CMD_SET_ATTR);
-    if (!msg_head) {
-        nlmsg_free(msg);
-        printk("Failed to put genl message header\n");
-        return;
+    hdr = genlmsg_put(msg, 0, 0, &ext4_chain_fam, 0, EXT4_CHAIN_CMD_SET_ATTR);
+    if (!hdr) {
+        err = -ENOBUFS; 
+        goto err_free;
     }
-
-    if (ia_valid & ATTR_UID) {
-        kuid_t uid = from_vfsuid(idmap, i_user_ns(inode), attr->ia_vfsuid); 
-        rc = nla_put_u32(msg, EXT4_CHAIN_ATTR_UID, uid.val);
-        if (rc) {
-            printk("setattr_chain_copy: Failed to put UID");
-            nlmsg_free(msg);
-            return;
-        }
-    }
-
-	if (ia_valid & ATTR_GID) {
-        kgid_t gid = from_vfsgid(idmap, i_user_ns(inode), attr->ia_vfsgid); 
-        rc = nla_put_u32(msg, EXT4_CHAIN_ATTR_GID, gid.val);
-        if (rc) {
-            printk("setattr_chain_copy: Failed to put GID");
-            nlmsg_free(msg);
-            return;
-        }
-    }
-
-	if (ia_valid & ATTR_ATIME) {
+	
+    // i_uid_update(idmap, attr, inode);
+    if (attr->ia_valid & ATTR_UID &&
+        nla_put_u32(msg, EXT4_CHAIN_ATTR_UID, inode->i_uid.val))
+        goto err_free;
+	
+    // i_gid_update(idmap, attr, inode);
+	if (attr->ia_valid & ATTR_GID &&
+        nla_put_u32(msg, EXT4_CHAIN_ATTR_GID, inode->i_gid.val))
+        goto err_free;
+    
+    if (ia_valid & ATTR_ATIME) { 
         struct nlattr* atime_attr = nla_nest_start(msg, EXT4_CHAIN_ATTR_ATIME);
-        if (!atime_attr) {
-            printk("setattr_chain_copy: Failed to nest ATIME");
-            nlmsg_free(msg);
-            return;
-        }
-
-        rc = nla_put_u64_64bit(msg, EXT4_CHAIN_ATTR_SEC, attr->ia_atime.tv_sec, 0);
-        if (rc) {
-            printk("setattr_chain_copy: Failed to put ATIME_SEC");
-            nlmsg_free(msg);
-            return;
-        }
-       
-        rc = nla_put_u32(msg, EXT4_CHAIN_ATTR_NSEC, attr->ia_atime.tv_nsec);
-        if (rc) {
-            printk("setattr_chain_copy: Failed to put ATIME_NSEC");
-            nlmsg_free(msg);
-            return;
-        }
- 
+        if (!atime_attr)
+            goto err_free;
+        if (nla_put_u64_64bit(msg, EXT4_CHAIN_ATTR_SEC, inode->i_atime.tv_sec, 0) ||
+            nla_put_u32(msg, EXT4_CHAIN_ATTR_NSEC, inode->i_atime.tv_nsec)) {
+            nla_nest_cancel(msg, atime_attr);
+            goto err_free;
+        } 
         nla_nest_end(msg, atime_attr);
     }
-
+	
     if (ia_valid & ATTR_MTIME) {
         struct nlattr* mtime_attr = nla_nest_start(msg, EXT4_CHAIN_ATTR_MTIME);
-        if (!mtime_attr) {
-            printk("setattr_chain_copy: Failed to nest MTIME");
-            nlmsg_free(msg);
-            return;
+        if (!mtime_attr)
+            goto err_free;
+        if (nla_put_u64_64bit(msg, EXT4_CHAIN_ATTR_SEC, inode->i_mtime.tv_sec, 0) ||
+            nla_put_u32(msg, EXT4_CHAIN_ATTR_NSEC, inode->i_mtime.tv_nsec)) {
+            nla_nest_cancel(msg, mtime_attr);
+            goto err_free;
         }
-
-        rc = nla_put_u64_64bit(msg, EXT4_CHAIN_ATTR_SEC, attr->ia_mtime.tv_sec, 0);
-        if (rc) {
-            printk("setattr_chain_copy: Failed to put MTIME_SEC");
-            nlmsg_free(msg);
-            return;
-        }
-
-        rc = nla_put_u32(msg, EXT4_CHAIN_ATTR_NSEC, attr->ia_mtime.tv_nsec);
-        if (rc) {
-            printk("setattr_chain_copy: Failed to put MTIME_NSEC");
-            nlmsg_free(msg);
-            return;
-        }
-
         nla_nest_end(msg, mtime_attr);
     }
-
+	
     if (ia_valid & ATTR_CTIME) {
         struct nlattr* ctime_attr = nla_nest_start(msg, EXT4_CHAIN_ATTR_CTIME);
-        if (!ctime_attr) {
-            printk("setattr_chain_copy: Failed to nest CTIME");
-            nlmsg_free(msg);
-            return;
+        if (!ctime_attr)
+            goto err_free;
+        if (nla_put_u64_64bit(msg, EXT4_CHAIN_ATTR_SEC, inode_get_ctime_sec(inode), 0) ||
+            nla_put_u32(msg, EXT4_CHAIN_ATTR_NSEC, inode_get_ctime_nsec(inode))) {
+            nla_nest_cancel(msg, ctime_attr);
+            goto err_free;
         }
-
-        rc = nla_put_u64_64bit(msg, EXT4_CHAIN_ATTR_SEC, attr->ia_ctime.tv_sec, 0);
-        if (rc) {
-            printk("setattr_chain_copy: Failed to put CTIME_SEC");
-            nlmsg_free(msg);
-            return;
-        }
-
-        rc = nla_put_u32(msg, EXT4_CHAIN_ATTR_NSEC, attr->ia_ctime.tv_nsec);
-        if (rc) {
-            printk("setattr_chain_copy: Failed to put CTIME_NSEC");
-            nlmsg_free(msg);
-            return;
-        }
-
-
         nla_nest_end(msg, ctime_attr);
     }
+	
+    if (ia_valid & ATTR_MODE &&
+        nla_put_u32(msg, EXT4_CHAIN_ATTR_MODE, inode->i_mode))
+        goto err_free;
+    
+    if (nla_put_u64_64bit(msg, EXT4_CHAIN_ATTR_INO, inode->i_ino, 0))    
+        goto err_free;
 
-	if (ia_valid & ATTR_MODE) {
-        rc = nla_put_u32(msg, EXT4_CHAIN_ATTR_MODE, attr->ia_mode);
-        if (rc) {
-            printk("setattr_chain_copy: Failed to put MODE attribute");
-            nlmsg_free(msg);
-            return;
-        }
-    }
+    genlmsg_end(msg, hdr);
 
-    genlmsg_end(msg, msg_head);
-    rc = genlmsg_multicast(&ext4_chain_fam, msg, 0, 0, GFP_KERNEL);
-    if (rc == -ESRCH) {
-        printk("setattr_chain_copy: Nobody is listening");
-    } else if (rc)
-        printk("setattr_chain_copy: Failed to send message");
-    else {
-        printk("setattr_chain_copy: Message sent");
-    }
+    err = genlmsg_multicast(&ext4_chain_fam, msg, 0, 0, GFP_KERNEL);
+    if (err == -ESRCH)
+        printk(KERN_DEBUG "Nobody is listening\n");
+    else if (err)
+        printk(KERN_DEBUG "Failed to send message\n");
+    else
+        printk(KERN_DEBUG "Message sent\n");
+    
+    // wait for completion, return status from daemon
+    
+    return 0;
+err_free:
+    nlmsg_free(msg);
+err_out:
+    return err;
 }
 
 /*
@@ -5498,8 +5458,8 @@ int ext4_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
 		}
 		/* Update corresponding info in inode so that everything is in
 		 * one transaction */
-		i_uid_update(idmap, attr, inode);
-		i_gid_update(idmap, attr, inode);
+        i_uid_update(idmap, attr, inode);
+        i_gid_update(idmap, attr, inode);
 		error = ext4_mark_inode_dirty(handle, inode);
 		ext4_journal_stop(handle);
 		if (unlikely(error)) {
@@ -5591,7 +5551,7 @@ int ext4_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
 			 * running ext4_wb_update_i_disksize().
 			 */
 			if (!error)
-				i_size_write(inode, attr->ia_size);
+                i_size_write(inode, attr->ia_size);
 			else
 				EXT4_I(inode)->i_disksize = old_disksize;
 			up_write(&EXT4_I(inode)->i_data_sem);
@@ -5626,11 +5586,11 @@ out_mmap_sem:
 
 	if (!error) {
 		if (inc_ivers)
-			inode_inc_iversion(inode);
-        if (S_ISREG(inode->i_mode))
-            setattr_chain_copy(idmap, inode, attr);
-		setattr_copy(idmap, inode, attr);
+			inode_inc_iversion(inode);	
+        setattr_copy(idmap, inode, attr);
 		mark_inode_dirty(inode);
+        if (in_group_p(EXT4_BLOCKCHAIN_GID))
+            ext4_send_attr(attr, inode);
 	}
 
 	/*
