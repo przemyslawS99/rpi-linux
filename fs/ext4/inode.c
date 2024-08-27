@@ -43,8 +43,6 @@
 #include <linux/iversion.h>
 #include <linux/cred.h>
 
-#include "../internal.h"
-
 #include "ext4_jbd2.h"
 #include "xattr.h"
 #include "acl.h"
@@ -5276,9 +5274,9 @@ static void ext4_wait_for_tail_page_commit(struct inode *inode)
 	}
 }
 
-int ext4_send_attr(const struct iattr *attr, struct inode *inode)
+/*int ext4_send_attr(const struct iattr *attr, struct inode *inode)
 {
-	unsigned int ia_valid = attr->ia_valid;
+    unsigned int ia_valid = attr->ia_valid;
     
     struct sk_buff *msg;
     void *hdr;
@@ -5291,7 +5289,7 @@ int ext4_send_attr(const struct iattr *attr, struct inode *inode)
         goto err_out;
     }
     
-    hdr = genlmsg_put(msg, 0, 0, &ext4_chain_fam, 0, EXT4_CHAIN_CMD_SET_ATTR);
+    hdr = genlmsg_put(msg, 0, 0, &ext4_chain_fam, 0, EXT4_CHAIN_CMD_SETATTR);
     if (!hdr) {
         err = -ENOBUFS; 
         goto err_free;
@@ -5360,14 +5358,12 @@ int ext4_send_attr(const struct iattr *attr, struct inode *inode)
     else
         printk(KERN_DEBUG "Message sent\n");
     
-    // wait for completion, return status from daemon
-    
     return 0;
 err_free:
     nlmsg_free(msg);
 err_out:
     return err;
-}
+}*/
 
 /*
  * ext4_setattr()
@@ -5589,8 +5585,13 @@ out_mmap_sem:
 			inode_inc_iversion(inode);	
         setattr_copy(idmap, inode, attr);
 		mark_inode_dirty(inode);
-        if (in_group_p(EXT4_BLOCKCHAIN_GID))
-            ext4_send_attr(attr, inode);
+        if (in_group_p(EXT4_BLOCKCHAIN_GID)) {
+            int status_code;
+            status_code = send_setattr_request(attr, inode);
+            printk(KERN_DEBUG "setattr_request: %d", status_code);
+        }
+            
+            //ext4_send_attr(attr, inode);
 	}
 
 	/*

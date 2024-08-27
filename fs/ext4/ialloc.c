@@ -974,7 +974,7 @@ struct inode *__ext4_new_inode(struct mnt_idmap *idmap,
 		inode_fsuid_set(inode, idmap);
 		inode->i_gid = dir->i_gid;
 	} else
-		inode_init_owner(idmap, inode, dir, mode);
+		inode_init_owner(idmap, inode, dir, mode); // set i_uid, set i_gid, set i_mode
 
 	if (ext4_has_feature_project(sb) &&
 	    ext4_test_inode_flag(dir, EXT4_INODE_PROJINHERIT))
@@ -1247,10 +1247,10 @@ got:
 						flex_group)->free_inodes);
 	}
 
-	inode->i_ino = ino + group * EXT4_INODES_PER_GROUP(sb);
+	inode->i_ino = ino + group * EXT4_INODES_PER_GROUP(sb); // set i_ino
 	/* This is the optimal IO size (for stat), not the fs block size */
 	inode->i_blocks = 0;
-	inode->i_mtime = inode->i_atime = inode_set_ctime_current(inode);
+	inode->i_mtime = inode->i_atime = inode_set_ctime_current(inode); // set i_mtime, set i_atime, set i_ctime
 	ei->i_crtime = inode->i_mtime;
 
 	memset(ei->i_data, 0, sizeof(ei->i_data));
