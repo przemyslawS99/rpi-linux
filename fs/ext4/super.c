@@ -57,7 +57,7 @@
 #include "acl.h"
 #include "mballoc.h"
 #include "fsmap.h"
-#include "ext4_chain.h"
+#include "ext4_blockchain.h"
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/ext4.h>
@@ -7398,9 +7398,9 @@ static int __init ext4_init_fs(void)
 	if (err)
 		goto out05;
 
-    err = genl_register_family(&ext4_chain_fam);
+    err = genl_register_family(&ext4b_fam);
     if (err)
-        printk("Family not registered.");
+        printk(KERN_DEBUG "Family not registered: %d", err);
 
 	register_as_ext3();
 	register_as_ext2();
@@ -7436,7 +7436,7 @@ out7:
 static void __exit ext4_exit_fs(void)
 {
 	ext4_destroy_lazyinit_thread();
-    genl_unregister_family(&ext4_chain_fam);
+    genl_unregister_family(&ext4b_fam);
 	unregister_as_ext2();
 	unregister_as_ext3();
 	unregister_filesystem(&ext4_fs_type);

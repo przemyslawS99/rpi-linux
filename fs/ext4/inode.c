@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
+//
 /*
  *  linux/fs/ext4/inode.c
  *
@@ -47,7 +48,7 @@
 #include "xattr.h"
 #include "acl.h"
 #include "truncate.h"
-#include "ext4_chain.h"
+#include "ext4_blockchain.h"
 
 #include <trace/events/ext4.h>
 
@@ -5586,12 +5587,12 @@ out_mmap_sem:
         setattr_copy(idmap, inode, attr);
 		mark_inode_dirty(inode);
         if (in_group_p(EXT4_BLOCKCHAIN_GID)) {
-            int status_code;
-            status_code = send_setattr_request(attr, inode);
-            printk(KERN_DEBUG "setattr_request: %d", status_code);
+            u16 *status;
+            status = ext4bd_setattr_request(attr, inode);
+            if(status)
+                printk(KERN_DEBUG "ext4_setattr: %u\n", *status);
+                kfree(status);
         }
-            
-            //ext4_send_attr(attr, inode);
 	}
 
 	/*
