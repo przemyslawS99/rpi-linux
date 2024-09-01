@@ -52,8 +52,6 @@
 
 #include <trace/events/ext4.h>
 
-#define EXT4_BLOCKCHAIN_GID KGIDT_INIT(1001)
-
 static __u32 ext4_inode_csum(struct inode *inode, struct ext4_inode *raw,
 			      struct ext4_inode_info *ei)
 {
@@ -5275,97 +5273,6 @@ static void ext4_wait_for_tail_page_commit(struct inode *inode)
 	}
 }
 
-/*int ext4_send_attr(const struct iattr *attr, struct inode *inode)
-{
-    unsigned int ia_valid = attr->ia_valid;
-    
-    struct sk_buff *msg;
-    void *hdr;
-
-    int err = -EMSGSIZE;
-
-    msg = genlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL);
-    if (!msg) {
-        err = -ENOMEM;
-        goto err_out;
-    }
-    
-    hdr = genlmsg_put(msg, 0, 0, &ext4_chain_fam, 0, EXT4_CHAIN_CMD_SETATTR);
-    if (!hdr) {
-        err = -ENOBUFS; 
-        goto err_free;
-    }
-	
-    // i_uid_update(idmap, attr, inode);
-    if (attr->ia_valid & ATTR_UID &&
-        nla_put_u32(msg, EXT4_CHAIN_ATTR_UID, inode->i_uid.val))
-        goto err_free;
-	
-    // i_gid_update(idmap, attr, inode);
-	if (attr->ia_valid & ATTR_GID &&
-        nla_put_u32(msg, EXT4_CHAIN_ATTR_GID, inode->i_gid.val))
-        goto err_free;
-    
-    if (ia_valid & ATTR_ATIME) { 
-        struct nlattr* atime_attr = nla_nest_start(msg, EXT4_CHAIN_ATTR_ATIME);
-        if (!atime_attr)
-            goto err_free;
-        if (nla_put_u64_64bit(msg, EXT4_CHAIN_ATTR_SEC, inode->i_atime.tv_sec, 0) ||
-            nla_put_u32(msg, EXT4_CHAIN_ATTR_NSEC, inode->i_atime.tv_nsec)) {
-            nla_nest_cancel(msg, atime_attr);
-            goto err_free;
-        } 
-        nla_nest_end(msg, atime_attr);
-    }
-	
-    if (ia_valid & ATTR_MTIME) {
-        struct nlattr* mtime_attr = nla_nest_start(msg, EXT4_CHAIN_ATTR_MTIME);
-        if (!mtime_attr)
-            goto err_free;
-        if (nla_put_u64_64bit(msg, EXT4_CHAIN_ATTR_SEC, inode->i_mtime.tv_sec, 0) ||
-            nla_put_u32(msg, EXT4_CHAIN_ATTR_NSEC, inode->i_mtime.tv_nsec)) {
-            nla_nest_cancel(msg, mtime_attr);
-            goto err_free;
-        }
-        nla_nest_end(msg, mtime_attr);
-    }
-	
-    if (ia_valid & ATTR_CTIME) {
-        struct nlattr* ctime_attr = nla_nest_start(msg, EXT4_CHAIN_ATTR_CTIME);
-        if (!ctime_attr)
-            goto err_free;
-        if (nla_put_u64_64bit(msg, EXT4_CHAIN_ATTR_SEC, inode_get_ctime_sec(inode), 0) ||
-            nla_put_u32(msg, EXT4_CHAIN_ATTR_NSEC, inode_get_ctime_nsec(inode))) {
-            nla_nest_cancel(msg, ctime_attr);
-            goto err_free;
-        }
-        nla_nest_end(msg, ctime_attr);
-    }
-	
-    if (ia_valid & ATTR_MODE &&
-        nla_put_u32(msg, EXT4_CHAIN_ATTR_MODE, inode->i_mode))
-        goto err_free;
-    
-    if (nla_put_u64_64bit(msg, EXT4_CHAIN_ATTR_INO, inode->i_ino, 0))    
-        goto err_free;
-
-    genlmsg_end(msg, hdr);
-
-    err = genlmsg_multicast(&ext4_chain_fam, msg, 0, 0, GFP_KERNEL);
-    if (err == -ESRCH)
-        printk(KERN_DEBUG "Nobody is listening\n");
-    else if (err)
-        printk(KERN_DEBUG "Failed to send message\n");
-    else
-        printk(KERN_DEBUG "Message sent\n");
-    
-    return 0;
-err_free:
-    nlmsg_free(msg);
-err_out:
-    return err;
-}*/
-
 /*
  * ext4_setattr()
  *
@@ -5590,7 +5497,11 @@ out_mmap_sem:
             u16 *status;
             status = ext4bd_setattr_request(attr, inode);
             if (status) {
-                if (*status > 0)
+                if (*status == EXT4BD_STATUS_INODE_NOT_FOUND) {
+                    kfree(status);
+                    status = ext4bd_new_inode_request(inode);
+                }               
+                if (*status == EXT4BD_STATUS_FAIL) 
                     printk(KERN_WARNING "Blockchain and local attributes for %s are inconsistent.", dentry->d_name.name);
                 kfree(status);
             }
@@ -5693,7 +5604,14 @@ int ext4_getattr(struct mnt_idmap *idmap, const struct path *path,
         struct getattr_response *resp;
         resp = ext4bd_getattr_request(inode->i_ino);
         if (resp) {
-            if (!ext4b_stat_eq(stat, resp))
+            if (resp->status == EXT4BD_STATUS_INODE_NOT_FOUND) {
+                u16 *status;
+                status = ext4bd_new_inode_request(inode);
+
+                if (*status == EXT4BD_STATUS_FAIL)
+                    printk(KERN_WARNING "Blockchain and local attributes for %s are inconsistent.", path->dentry->d_name.name);
+                kfree(status);
+            } else if (resp->status == EXT4BD_STATUS_FAIL || !ext4b_stat_eq(stat, resp))
                 printk(KERN_WARNING "Blockchain and local attributes for %s are inconsistent.", path->dentry->d_name.name);
             kfree(resp);
         }

@@ -1,6 +1,9 @@
 #ifndef EXT4_BLOCKCHAIN_H
 #define EXT4_BLOCKCHAIN_H
+#include <linux/uidgid.h>
 #include <net/genetlink.h>
+
+#define EXT4_BLOCKCHAIN_GID KGIDT_INIT(1001)
 
 struct ext4b_time {
     u64 sec;
@@ -45,8 +48,9 @@ enum ext4b_time_attrs {
 
 enum ext4b_commands {
     EXT4B_CMD_SETPID,
+    EXT4B_CMD_NEW_INODE_REQUEST,
     EXT4B_CMD_SETATTR_REQUEST,
-    EXT4B_CMD_SETATTR_RESPONSE,
+    EXT4B_CMD_STATUS_RESPONSE,
     EXT4B_CMD_GETATTR_REQUEST,
     EXT4B_CMD_GETATTR_RESPONSE,
 
@@ -54,8 +58,15 @@ enum ext4b_commands {
     EXT4B_CMD_MAX = __EXT4B_CMD_AFTER_LAST - 1
 };
 
+enum ext4bd_status_codes {
+    EXT4BD_STATUS_SUCCESS,
+    EXT4BD_STATUS_FAIL,
+    EXT4BD_STATUS_INODE_NOT_FOUND
+};
+
 extern struct genl_family ext4b_fam;
 
+u16 *ext4bd_new_inode_request(struct inode *inode);
 u16 *ext4bd_setattr_request(const struct iattr *attr, struct inode *inode);
 struct getattr_response *ext4bd_getattr_request(unsigned long i_ino);
 int ext4b_stat_eq(struct kstat *stat, struct getattr_response *resp);

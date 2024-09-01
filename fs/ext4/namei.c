@@ -41,6 +41,7 @@
 
 #include "xattr.h"
 #include "acl.h"
+#include "ext4_blockchain.h"
 
 #include <trace/events/ext4.h>
 /*
@@ -2809,6 +2810,20 @@ static int ext4_add_nondir(handle_t *handle,
 	return err;
 }
 
+static void handle_ext4bd_op(struct dentry *dentry)
+{
+    struct inode *inode = d_inode(dentry);
+    if (gid_eq(inode->i_gid, EXT4_BLOCKCHAIN_GID)) {
+        u16 *status;
+        status = ext4bd_new_inode_request(inode);
+        if (status) {
+            if (*status == EXT4BD_STATUS_FAIL) 
+                printk(KERN_WARNING "Blockchain and local attributes for %s are inconsistent.", dentry->d_name.name);
+            kfree(status);
+        }
+    }
+}
+
 /*
  * By the time this is called, we already have created
  * the directory cache entry for the new file, but it
@@ -2820,7 +2835,7 @@ static int ext4_add_nondir(handle_t *handle,
 static int ext4_create(struct mnt_idmap *idmap, struct inode *dir,
 		       struct dentry *dentry, umode_t mode, bool excl)
 {
-	handle_t *handle;
+    handle_t *handle;
 	struct inode *inode;
 	int err, credits, retries = 0;
 
@@ -2833,22 +2848,26 @@ static int ext4_create(struct mnt_idmap *idmap, struct inode *dir,
 retry:
 	inode = ext4_new_inode_start_handle(idmap, dir, mode, &dentry->d_name,
 					    0, NULL, EXT4_HT_DIR, credits);
-	handle = ext4_journal_current_handle();
+    handle = ext4_journal_current_handle();
 	err = PTR_ERR(inode);
 	if (!IS_ERR(inode)) {
-		inode->i_op = &ext4_file_inode_operations;
+        inode->i_op = &ext4_file_inode_operations;
 		inode->i_fop = &ext4_file_operations;
 		ext4_set_aops(inode);
-		err = ext4_add_nondir(handle, dentry, &inode);
-		if (!err)
-			ext4_fc_track_create(handle, dentry);
+        err = ext4_add_nondir(handle, dentry, &inode);
+        if (!err)
+            ext4_fc_track_create(handle, dentry);
 	}
 	if (handle)
 		ext4_journal_stop(handle);
-	if (!IS_ERR_OR_NULL(inode))
-		iput(inode);
+
+    if (!IS_ERR_OR_NULL(inode))
+        iput(inode);
+
 	if (err == -ENOSPC && ext4_should_retry_alloc(dir->i_sb, &retries))
 		goto retry;
+
+    handle_ext4bd_op(dentry);            
 	return err;
 }
 

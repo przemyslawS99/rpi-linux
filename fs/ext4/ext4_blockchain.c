@@ -59,7 +59,7 @@ static int parse_ext4b_time(struct nlattr *attrs, struct ext4b_time *time)
 static int setpid(struct sk_buff *skb, struct genl_info *info)
 {
     ext4bd_pid = info->snd_portid;
-    printk(KERN_DEBUG "setpid: Daemon pid successfuly set: %d", ext4bd_pid);
+    printk(KERN_DEBUG "ext4_blockchain: Daemon pid successfuly set: %d", ext4bd_pid);
     return 0;
 };
 
@@ -100,9 +100,9 @@ static void *send_request(struct sk_buff *msg, unsigned long i_ino, unsigned int
     if (err)
         goto out;
     
-    printk(KERN_DEBUG "send_request: Message sent. i_ino: %lu. Waiting for completion...\n", i_ino);
+    printk(KERN_DEBUG "ext4_blockchain: Message sent - i_ino=%lu, cmd=%u.\n", i_ino, cmd);
     wait_for_completion(comp);
-    printk(KERN_DEBUG "send_request: Request completed. i_ino: %lu.\n", i_ino);
+    printk(KERN_DEBUG "ext4_blockchain: Request completed - i_ino=%lu, cmd=%u.\n", i_ino, cmd);
 out:
     down_write(&ext4bd_req_table_lock);
     hash_del(&entry.ext4bd_req_table_hlist);
@@ -113,6 +113,90 @@ request_already_exists:
     wait_for_completion(comp);
     return entry.response;
 };
+
+static int ext4bd_prep_new_inode_req_msg(struct sk_buff *msg, struct inode *inode)
+{
+    void *hdr;
+
+    int err = -EMSGSIZE;
+
+    hdr = genlmsg_put(msg, 0, 0, &ext4b_fam, 0, EXT4B_CMD_NEW_INODE_REQUEST);
+    if (!hdr) {
+        err = -ENOBUFS;
+        goto err_out;
+    }
+
+    if (nla_put_u32(msg, EXT4B_ATTR_UID, inode->i_uid.val))
+        goto err_out;
+
+    if (nla_put_u32(msg, EXT4B_ATTR_GID, inode->i_gid.val))
+        goto err_out;
+
+    struct nlattr* atime_attr = nla_nest_start(msg, EXT4B_ATTR_ATIME);
+    if (!atime_attr)
+        goto err_out;
+    if (nla_put_u64_64bit(msg, EXT4B_TIME_ATTR_SEC, inode->i_atime.tv_sec, 0) ||
+        nla_put_u32(msg, EXT4B_TIME_ATTR_NSEC, inode->i_atime.tv_nsec)) {
+        nla_nest_cancel(msg, atime_attr);
+        goto err_out;
+    }
+    nla_nest_end(msg, atime_attr);
+
+    struct nlattr* mtime_attr = nla_nest_start(msg, EXT4B_ATTR_MTIME);
+    if (!mtime_attr)
+        goto err_out;
+    if (nla_put_u64_64bit(msg, EXT4B_TIME_ATTR_SEC, inode->i_mtime.tv_sec, 0) ||
+        nla_put_u32(msg, EXT4B_TIME_ATTR_NSEC, inode->i_mtime.tv_nsec)) {
+        nla_nest_cancel(msg, mtime_attr);
+        goto err_out;
+    } 
+    nla_nest_end(msg, mtime_attr);
+
+    struct nlattr* ctime_attr = nla_nest_start(msg, EXT4B_ATTR_CTIME);
+    if (!ctime_attr)
+        goto err_out;
+    if (nla_put_u64_64bit(msg, EXT4B_TIME_ATTR_SEC, inode_get_ctime_sec(inode), 0) ||
+        nla_put_u32(msg, EXT4B_TIME_ATTR_NSEC, inode_get_ctime_nsec(inode))) {
+        nla_nest_cancel(msg, ctime_attr);
+        goto err_out;
+    } 
+    nla_nest_end(msg, ctime_attr);
+
+    if (nla_put_u32(msg, EXT4B_ATTR_MODE, inode->i_mode))
+        goto err_out;
+
+    if (nla_put_u64_64bit(msg, EXT4B_ATTR_INO, inode->i_ino, 0))
+        goto err_out;
+    genlmsg_end(msg, hdr);
+    return 0;
+
+err_out:
+    nlmsg_free(msg);
+    return err;
+}
+
+u16 *ext4bd_new_inode_request(struct inode *inode)
+{
+    struct sk_buff *msg;
+    u16 *resp = NULL;
+    
+    if (!ext4bd_pid) {
+        printk(KERN_DEBUG "ext4_blockchain: No running daemon.\n");
+        goto out;
+    }
+    
+    msg = genlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL);
+    if (!msg)
+        goto out;
+    
+    if (ext4bd_prep_new_inode_req_msg(msg, inode) < 0)
+        goto out;
+
+    printk(KERN_DEBUG "New inode send request %lu.\n", inode->i_ino);
+    resp = send_request(msg, inode->i_ino, EXT4B_CMD_NEW_INODE_REQUEST);
+out:
+    return resp;
+}
 
 static int ext4bd_prep_setattr_req_msg(struct sk_buff *msg, const struct iattr *attr, struct inode *inode)
 {
@@ -191,7 +275,7 @@ u16 *ext4bd_setattr_request(const struct iattr *attr, struct inode *inode)
     u16 *resp = NULL;
     
     if (!ext4bd_pid) {
-        printk(KERN_DEBUG "ext4bd_setattr_request: No running daemon.\n");
+        printk(KERN_DEBUG "ext4_blockchain: No running daemon.\n");
         goto out;
     }
     
@@ -202,6 +286,7 @@ u16 *ext4bd_setattr_request(const struct iattr *attr, struct inode *inode)
     if (ext4bd_prep_setattr_req_msg(msg, attr, inode) < 0)
         goto out;
 
+    printk(KERN_DEBUG "Setattr send request %lu.\n", inode->i_ino);
     resp = send_request(msg, inode->i_ino, EXT4B_CMD_SETATTR_REQUEST);
 out:
     return resp;
@@ -236,7 +321,7 @@ struct getattr_response *ext4bd_getattr_request(unsigned long i_ino)
     struct getattr_response *resp = NULL;
     
     if (!ext4bd_pid) {
-        printk(KERN_DEBUG "ext4bd_getattr_request: No running daemon.\n");
+        printk(KERN_DEBUG "ext4_blockchain: No running daemon.\n");
         goto out;
     }
 
@@ -253,7 +338,7 @@ out:
     return resp;
 };
 
-static int handle_setattr_response(struct sk_buff *skb, struct genl_info *info)
+static int handle_status_response(struct sk_buff *skb, struct genl_info *info)
 {
     struct ext4bd_req_table_entry *entry;
     u64 i_ino;
@@ -261,9 +346,8 @@ static int handle_setattr_response(struct sk_buff *skb, struct genl_info *info)
     int ret = 0;
 
     if (!info->attrs[EXT4B_ATTR_STATUS] ||
-        !info->attrs[EXT4B_ATTR_INO]) {
+        !info->attrs[EXT4B_ATTR_INO])
         return -EINVAL;
-    }
 
     i_ino = nla_get_u64(info->attrs[EXT4B_ATTR_INO]);
     
@@ -280,6 +364,7 @@ static int handle_setattr_response(struct sk_buff *skb, struct genl_info *info)
         }        
         *(u16 *)entry->response = nla_get_u16(info->attrs[EXT4B_ATTR_STATUS]); 
 out:
+        printk(KERN_DEBUG "complete: %llu", i_ino);
         complete(&entry->comp);
         break;
     }
@@ -294,17 +379,10 @@ static int handle_getattr_response(struct sk_buff *skb, struct genl_info *info)
     struct getattr_response *resp;
     u64 i_ino;
     int ret = 0;
-
-    if(!info->attrs[EXT4B_ATTR_STATUS] ||
-       !info->attrs[EXT4B_ATTR_INO] ||
-       !info->attrs[EXT4B_ATTR_MODE] ||
-       !info->attrs[EXT4B_ATTR_UID] ||
-       !info->attrs[EXT4B_ATTR_GID] ||
-       !info->attrs[EXT4B_ATTR_ATIME] ||
-       !info->attrs[EXT4B_ATTR_MTIME] ||
-       !info->attrs[EXT4B_ATTR_CTIME]) {
+    
+     if (!info->attrs[EXT4B_ATTR_STATUS] ||
+         !info->attrs[EXT4B_ATTR_INO])
         return -EINVAL;
-    }
 
     i_ino = nla_get_u64(info->attrs[EXT4B_ATTR_INO]);
 
@@ -323,6 +401,18 @@ static int handle_getattr_response(struct sk_buff *skb, struct genl_info *info)
         resp = (struct getattr_response *)entry->response;
         
         resp->status = nla_get_u16(info->attrs[EXT4B_ATTR_STATUS]); 
+
+        if(resp->status != EXT4BD_STATUS_SUCCESS)
+            goto out;
+
+        if(!info->attrs[EXT4B_ATTR_MODE] ||
+           !info->attrs[EXT4B_ATTR_UID] ||
+           !info->attrs[EXT4B_ATTR_GID] ||
+           !info->attrs[EXT4B_ATTR_ATIME] ||
+           !info->attrs[EXT4B_ATTR_MTIME] ||
+           !info->attrs[EXT4B_ATTR_CTIME])
+            return -EINVAL;
+
         resp->i_mode = nla_get_u32(info->attrs[EXT4B_ATTR_MODE]); 
         resp->i_uid = nla_get_u32(info->attrs[EXT4B_ATTR_UID]); 
         resp->i_gid = nla_get_u32(info->attrs[EXT4B_ATTR_GID]); 
@@ -350,7 +440,7 @@ out:
 
 static int handle_unspec_cmd(struct sk_buff *skb, struct genl_info *info)
 {
-    printk(KERN_ERR "Unknown ext4_chain cmd: %d, ignore.\n", info->genlhdr->cmd);
+    printk(KERN_ERR "ext4_blockchain: Unknown ext4_chain cmd: %d, ignore.\n", info->genlhdr->cmd);
     return -EINVAL;
 };
 
@@ -373,12 +463,16 @@ static const struct genl_small_ops ext4b_small_ops[] = {
         .doit = setpid,
     },
     {
+        .cmd = EXT4B_CMD_NEW_INODE_REQUEST,
+        .doit = handle_unspec_cmd,
+    },
+    {
         .cmd = EXT4B_CMD_SETATTR_REQUEST,
         .doit = handle_unspec_cmd,
     },
     {
-        .cmd = EXT4B_CMD_SETATTR_RESPONSE,
-        .doit = handle_setattr_response,
+        .cmd = EXT4B_CMD_STATUS_RESPONSE,
+        .doit = handle_status_response,
     },
     {
         .cmd = EXT4B_CMD_GETATTR_REQUEST,
