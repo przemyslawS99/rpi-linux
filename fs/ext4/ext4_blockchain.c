@@ -31,12 +31,13 @@ static const struct nla_policy ext4b_policy[NUM_EXT4B_ATTR] = {
 };
 
 static const struct nla_policy ext4b_time_policy[NUM_EXT4B_TIME_ATTR] = {
+    [EXT4B_TIME_ATTR_UNSPEC] = {.type = NLA_UNSPEC},
     [EXT4B_TIME_ATTR_SEC] = { .type = NLA_U64 },
     [EXT4B_TIME_ATTR_NSEC] = { .type = NLA_U32 },
 };
 
 static int parse_ext4b_time(struct nlattr *attrs, struct ext4b_time *time)
-{
+{    
     struct nlattr *tb[NUM_EXT4B_TIME_ATTR];
     int err;
 
@@ -235,7 +236,7 @@ struct getattr_response *ext4bd_getattr_request(unsigned long i_ino)
     struct getattr_response *resp = NULL;
     
     if (!ext4bd_pid) {
-        printk(KERN_DEBUG "getattr_request: No running daemon.\n");
+        printk(KERN_DEBUG "ext4bd_getattr_request: No running daemon.\n");
         goto out;
     }
 
@@ -337,6 +338,7 @@ static int handle_getattr_response(struct sk_buff *skb, struct genl_info *info)
         ret = parse_ext4b_time(info->attrs[EXT4B_ATTR_CTIME], &resp->ctime);
         if (ret)
             goto out;
+        
 out:
         complete(&entry->comp);
         break;
@@ -351,6 +353,19 @@ static int handle_unspec_cmd(struct sk_buff *skb, struct genl_info *info)
     printk(KERN_ERR "Unknown ext4_chain cmd: %d, ignore.\n", info->genlhdr->cmd);
     return -EINVAL;
 };
+
+int ext4b_stat_eq(struct kstat *stat, struct getattr_response *resp)
+{
+    return (stat->mode == resp->i_mode &&
+            stat->uid.val == resp->i_uid &&
+            stat->gid.val == resp->i_gid &&
+            stat->atime.tv_sec == resp->atime.sec &&
+            stat->atime.tv_nsec == resp->atime.nsec &&
+            stat->mtime.tv_sec == resp->mtime.sec &&
+            stat->mtime.tv_nsec == resp->mtime.nsec &&
+            stat->ctime.tv_sec == resp->ctime.sec &&
+            stat->ctime.tv_nsec == resp->ctime.nsec) ? 1 : 0;
+}
 
 static const struct genl_small_ops ext4b_small_ops[] = {
     {

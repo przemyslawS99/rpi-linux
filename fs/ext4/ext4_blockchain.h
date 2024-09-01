@@ -9,7 +9,6 @@ struct ext4b_time {
 
 struct getattr_response {
     u16 status;
-    u64 i_ino;
     u32 i_mode;
     u32 i_uid;
     u32 i_gid;
@@ -35,6 +34,7 @@ enum ext4b_attrs {
 };
 
 enum ext4b_time_attrs {
+    EXT4B_TIME_ATTR_UNSPEC,
     EXT4B_TIME_ATTR_SEC,
     EXT4B_TIME_ATTR_NSEC,
 
@@ -58,5 +58,5 @@ extern struct genl_family ext4b_fam;
 
 u16 *ext4bd_setattr_request(const struct iattr *attr, struct inode *inode);
 struct getattr_response *ext4bd_getattr_request(unsigned long i_ino);
-
+int ext4b_stat_eq(struct kstat *stat, struct getattr_response *resp);
 #endif

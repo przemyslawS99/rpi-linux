@@ -5586,12 +5586,14 @@ out_mmap_sem:
 			inode_inc_iversion(inode);	
         setattr_copy(idmap, inode, attr);
 		mark_inode_dirty(inode);
-        if (in_group_p(EXT4_BLOCKCHAIN_GID)) {
+        if (gid_eq(inode->i_gid, EXT4_BLOCKCHAIN_GID)) {
             u16 *status;
             status = ext4bd_setattr_request(attr, inode);
-            if(status)
-                printk(KERN_DEBUG "ext4_setattr: %u\n", *status);
+            if (status) {
+                if (*status > 0)
+                    printk(KERN_WARNING "Blockchain and local attributes for %s are inconsistent.", dentry->d_name.name);
                 kfree(status);
+            }
         }
 	}
 
@@ -5627,24 +5629,6 @@ u32 ext4_dio_alignment(struct inode *inode)
 		return i_blocksize(inode);
 	}
 	return 1; /* use the iomap defaults */
-}
-
-void chain_fillattr(struct inode *inode, struct kstat *stat)
-{
-    printk("chain_fillattr");
-    /*stat->dev = inode->i_sb->s_dev;
-	stat->ino = inode->i_ino;
-	stat->mode = inode->i_mode;
-	stat->nlink = inode->i_nlink;
-	stat->uid = vfsuid_into_kuid(vfsuid);
-	stat->gid = vfsgid_into_kgid(vfsgid);
-	stat->rdev = inode->i_rdev;
-	stat->size = i_size_read(inode);
-	stat->atime = inode->i_atime;
-	stat->mtime = inode->i_mtime;
-	stat->ctime = inode_get_ctime(inode);
-	stat->blksize = i_blocksize(inode);
-	stat->blocks = inode->i_blocks;*/
 }
 
 int ext4_getattr(struct mnt_idmap *idmap, const struct path *path,
@@ -5705,8 +5689,15 @@ int ext4_getattr(struct mnt_idmap *idmap, const struct path *path,
 				  STATX_ATTR_VERITY);
 
 	generic_fillattr(idmap, request_mask, inode, stat);
-    /*if (S_ISREG(inode->i_mode))
-        chain_fillattr(inode, stat);*/
+    if (gid_eq(inode->i_gid, EXT4_BLOCKCHAIN_GID)) {
+        struct getattr_response *resp;
+        resp = ext4bd_getattr_request(inode->i_ino);
+        if (resp) {
+            if (!ext4b_stat_eq(stat, resp))
+                printk(KERN_WARNING "Blockchain and local attributes for %s are inconsistent.", path->dentry->d_name.name);
+            kfree(resp);
+        }
+    }
     return 0;
 }
 
